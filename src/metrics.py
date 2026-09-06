@@ -1,12 +1,15 @@
 """System metrics collection engine using psutil with process caching."""
 
+import dataclasses
 import os
 import platform
 import socket
+import sys
+import threading
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 import psutil
 
 
@@ -26,8 +29,8 @@ class ProcessInfo:
     name: str
     cpu_percent: float
     memory_percent: float
-    status: str
-    threads: int
+    status: str = "RUNNING"
+    threads: int = 1
     runtime_seconds: float = 0.0
 
 
@@ -80,8 +83,53 @@ class SystemSnapshot:
     processes: List[ProcessInfo]
 
 
+def _detect_os_name() -> str:
+    """Detect human-friendly operating system name and version (e.g. Windows 11 25H2)."""
+    system = platform.system()
+    if system == "Windows":
+        try:
+            build = sys.getwindowsversion().build
+            # Windows 11 kernel builds begin at 22000
+            base = "Windows 11" if build >= 22000 else f"Windows {platform.release()}"
+            try:
+                import winreg
+                with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows NT\CurrentVersion") as key:
+                    dv, _ = winreg.QueryValueEx(key, "DisplayVersion")
+                    if dv:
+                        return f"{base} {dv}"
+            except Exception:
+                pass
+            return base
+        except Exception:
+            return f"Windows {platform.release()}"
+    elif system == "Darwin":
+        return f"macOS {platform.mac_ver()[0]}"
+    elif system == "Linux":
+        try:
+            with open("/etc/os-release") as f:
+                for line in f:
+                    if line.startswith("PRETTY_NAME="):
+                        return line.split("=", 1)[1].strip().strip('"')
+        except Exception:
+            pass
+        return f"Linux {platform.release()}"
+    return f"{system} {platform.release()}"
+
+
+def _detect_architecture() -> str:
+    """Detect clean system architecture string (e.g. x64, ARM64)."""
+    mach = platform.machine()
+    if mach.upper() in ("AMD64", "X86_64"):
+        return "x64"
+    elif mach.upper() in ("ARM64", "AARCH64"):
+        return "ARM64"
+    elif mach.upper() in ("X86", "I386", "I686"):
+        return "x86"
+    return mach
+
+
 class MetricsCollector:
-    """Collects and smooths system performance metrics."""
+    """Collects and smooths system performance metrics with high efficiency."""
 
     def __init__(self, history_size: int = 40):
         self.history_size = history_size
@@ -92,23 +140,22 @@ class MetricsCollector:
             self._self_proc.cpu_percent(interval=None)
         except Exception:
             self._self_proc = None
-        
+
         # System metadata
         try:
             self.hostname = socket.gethostname()
         except Exception:
             self.hostname = "localhost"
 
-        self.os_name = f"{platform.system()} {platform.release()}"
-        self.architecture = platform.machine()
-        
+        self.os_name = _detect_os_name()
+        self.architecture = _detect_architecture()
+
         try:
             self.boot_time = psutil.boot_time()
         except Exception:
             self.boot_time = time.time()
 
-        # Cache of persistent Process instances for accurate CPU delta calculations
-        self._procs: Dict[int, psutil.Process] = {}
+        self.cpu_count = psutil.cpu_count(logical=True) or 1
 
         # Previous snapshot references for rate calculations
         self._last_time = time.time()
@@ -122,32 +169,119 @@ class MetricsCollector:
         except Exception:
             self._last_disk_io = None
 
-        # Prime psutil overall & core CPU stats
+        # Cache disk partitions to avoid expensive WMI/kernel device scans every tick
+        self._cached_partitions: List[str] = []
+        self._last_partition_scan: float = 0.0
+
+        # Raw process snapshot cache for instantaneous sort switching
+        self._raw_procs: List[Tuple[int, str, float, float, psutil.Process]] = []
+
+        # Threading & Background Worker
+        self._lock = threading.RLock()
+        self._bg_thread: Optional[threading.Thread] = None
+        self._bg_running = False
+        self._latest_snapshot: Optional[SystemSnapshot] = None
+        self._update_event = threading.Event()
+        self._stop_event = threading.Event()
+        self.interval = 1.0
+
+        # Prime psutil counters
         try:
             psutil.cpu_percent(interval=None, percpu=True)
             psutil.cpu_percent(interval=None)
+            list(psutil.process_iter(attrs=['name', 'cpu_percent', 'memory_percent']))
         except Exception:
             pass
 
-        # Prime initial processes so next poll has valid CPU deltas
-        self._prime_processes()
-        time.sleep(0.05)
+    def start_background(self, interval: float = 1.0) -> None:
+        """Start a background daemon thread that periodically collects snapshots."""
+        with self._lock:
+            if self._bg_running:
+                return
+            self._bg_running = True
+            self._stop_event.clear()
+            self.interval = max(0.2, interval)
 
-    def _prime_processes(self) -> None:
-        """Prime active processes to initialize CPU delta counters."""
-        try:
-            for p in psutil.process_iter(['pid', 'name']):
-                if p.pid == 0:
-                    continue
-                try:
-                    p.cpu_percent(interval=None)
-                    self._procs[p.pid] = p
-                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                    continue
-        except Exception:
-            pass
+        # Initial collection outside lock
+        initial_snap = self.collect(sort_by="cpu")
+        with self._lock:
+            self._latest_snapshot = initial_snap
+            self._bg_thread = threading.Thread(
+                target=self._bg_worker,
+                daemon=True,
+                name="MetricsWorkerThread",
+            )
+            self._bg_thread.start()
+
+    def stop_background(self) -> None:
+        """Stop the background collection thread."""
+        with self._lock:
+            self._bg_running = False
+        self._stop_event.set()
+        if self._bg_thread and self._bg_thread.is_alive():
+            self._bg_thread.join(timeout=1.0)
+
+    def _bg_worker(self) -> None:
+        while self._bg_running:
+            t0 = time.time()
+            try:
+                snap = self.collect(sort_by="cpu")
+                with self._lock:
+                    self._latest_snapshot = snap
+                self._update_event.set()
+            except Exception:
+                pass
+            elapsed = time.time() - t0
+            sleep_time = max(0.05, self.interval - elapsed)
+            if self._stop_event.wait(sleep_time):
+                break
+
+    def get_latest_snapshot(self, sort_by: str = "cpu", limit_processes: int = 10) -> SystemSnapshot:
+        """Get the latest snapshot immediately with zero latency and requested sort."""
+        with self._lock:
+            if self._latest_snapshot is None:
+                self._latest_snapshot = self.collect(sort_by=sort_by, limit_processes=limit_processes)
+                return self._latest_snapshot
+
+            snap = self._latest_snapshot
+            raw = list(self._raw_procs)
+
+        if not raw:
+            return snap
+
+        # Fast in-memory process sorting and extraction
+        if sort_by.lower() in ("ram", "mem"):
+            raw.sort(key=lambda x: x[3], reverse=True)
+        else:
+            raw.sort(key=lambda x: x[2], reverse=True)
+
+        selected = raw[:limit_processes]
+        now = time.time()
+        procs: List[ProcessInfo] = []
+
+        for pid, name, cpu_p, mem_p, p in selected:
+            runtime_s = 0.0
+            try:
+                ct = p.create_time()
+                runtime_s = max(0.0, now - (ct if ct > self.boot_time else self.boot_time))
+            except Exception:
+                pass
+            procs.append(
+                ProcessInfo(
+                    pid=pid,
+                    name=name,
+                    cpu_percent=cpu_p,
+                    memory_percent=mem_p,
+                    status="RUNNING",
+                    threads=1,
+                    runtime_seconds=runtime_s,
+                )
+            )
+
+        return dataclasses.replace(snap, processes=procs)
 
     def collect(self, sort_by: str = "cpu", limit_processes: int = 10) -> SystemSnapshot:
+        """Collect all system telemetry quickly with minimal CPU overhead."""
         now = time.time()
         dt = max(now - self._last_time, 0.001)
 
@@ -164,7 +298,6 @@ class MetricsCollector:
         except Exception:
             cpu_cores = [cpu_overall]
 
-        # CPU Frequency (safely handled for VM/ARM/WSL setups)
         try:
             freq = psutil.cpu_freq()
             cpu_freq_current = freq.current if freq else 0.0
@@ -191,25 +324,31 @@ class MetricsCollector:
             swap_total = swap_used = 0
             swap_percent = 0.0
 
-        # 3. Disks & Disk I/O (with mount deduplication)
+        # 3. Disks & Disk I/O (Cached partitions to prevent drive-scanning lag)
+        if not self._cached_partitions or (now - self._last_partition_scan > 60.0):
+            try:
+                self._cached_partitions = [
+                    p.mountpoint
+                    for p in psutil.disk_partitions(all=False)
+                    if "cdrom" not in p.opts and p.fstype != ""
+                ]
+                self._last_partition_scan = now
+            except Exception:
+                self._cached_partitions = ["C:\\"] if sys.platform == "win32" else ["/"]
+                self._last_partition_scan = now
+
         disks: List[DiskInfo] = []
         seen_mounts: Set[str] = set()
-        try:
-            partitions = psutil.disk_partitions(all=False)
-        except Exception:
-            partitions = []
-
-        for part in partitions:
-            # Skip virtual/unready mounts
-            if "cdrom" in part.opts or part.fstype == "" or part.mountpoint in seen_mounts:
+        for mountpoint in self._cached_partitions:
+            if mountpoint in seen_mounts:
                 continue
             try:
-                usage = psutil.disk_usage(part.mountpoint)
-                seen_mounts.add(part.mountpoint)
+                usage = psutil.disk_usage(mountpoint)
+                seen_mounts.add(mountpoint)
                 disks.append(
                     DiskInfo(
-                        mountpoint=part.mountpoint,
-                        fstype=part.fstype,
+                        mountpoint=mountpoint,
+                        fstype="",
                         total=usage.total,
                         used=usage.used,
                         free=usage.free,
@@ -266,85 +405,69 @@ class MetricsCollector:
             battery_percent = 0.0
             battery_plugged = False
 
-        # 6. Process Monitoring (with caching & PID 0 filtering)
-        processes: List[ProcessInfo] = []
-        cpu_count = psutil.cpu_count(logical=True) or 1
-
+        # 6. High-Performance Process Monitoring
+        raw_procs: List[Tuple[int, str, float, float, psutil.Process]] = []
         try:
-            active_pids = set(psutil.pids())
-        except Exception:
-            active_pids = set(self._procs.keys())
-
-        # Prune terminated processes from cache
-        self._procs = {pid: p for pid, p in self._procs.items() if pid in active_pids}
-
-        # Iterate active processes
-        for pid in active_pids:
-            if pid == 0:
-                continue  # Skip System Idle Process
-
-            proc = self._procs.get(pid)
-            if proc is None:
+            for p in psutil.process_iter(attrs=['name', 'cpu_percent', 'memory_percent']):
                 try:
-                    proc = psutil.Process(pid)
-                    proc.cpu_percent(interval=None)  # prime
-                    self._procs[pid] = proc
+                    info = p.info
+                    name = info.get('name')
+                    if not name or name == 'System Idle Process' or p.pid == 0:
+                        continue
+                    raw_cpu = info.get('cpu_percent') or 0.0
+                    cpu_p = max(0.0, min(100.0, raw_cpu / self.cpu_count))
+                    mem_p = info.get('memory_percent') or 0.0
+                    raw_procs.append((p.pid, name, cpu_p, mem_p, p))
                 except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                     continue
+                except Exception:
+                    continue
+        except Exception:
+            pass
 
-            try:
-                with proc.oneshot():
-                    name = proc.name() or "unknown"
-                    raw_cpu = proc.cpu_percent(interval=None)
-                    # Normalize CPU to 0-100% scale
-                    cpu_p = max(0.0, min(100.0, raw_cpu / cpu_count))
-                    mem_p = proc.memory_percent() or 0.0
-                    status = proc.status() or "?"
-                    threads = proc.num_threads() or 1
-                    try:
-                        create_time = proc.create_time()
-                        if create_time <= self.boot_time:
-                            runtime_s = max(0.0, now - self.boot_time)
-                        else:
-                            runtime_s = max(0.0, now - create_time)
-                    except Exception:
-                        runtime_s = 0.0
+        with self._lock:
+            self._raw_procs = raw_procs
 
-                    processes.append(
-                        ProcessInfo(
-                            pid=pid,
-                            name=name,
-                            cpu_percent=cpu_p,
-                            memory_percent=mem_p,
-                            status=str(status).upper(),
-                            threads=threads,
-                            runtime_seconds=runtime_s,
-                        )
-                    )
-            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                self._procs.pop(pid, None)
-                continue
-
-        # Sort processes according to selected metric
+        # Sort according to requested metric
         if sort_by.lower() in ("ram", "mem"):
-            processes.sort(key=lambda p: p.memory_percent, reverse=True)
+            raw_procs.sort(key=lambda x: x[3], reverse=True)
         else:
-            processes.sort(key=lambda p: p.cpu_percent, reverse=True)
+            raw_procs.sort(key=lambda x: x[2], reverse=True)
 
-        processes = processes[:limit_processes]
+        selected = raw_procs[:limit_processes]
+        processes: List[ProcessInfo] = []
 
-        # App footprint (NeonTop itself running in background)
+        for pid, name, cpu_p, mem_p, p in selected:
+            runtime_s = 0.0
+            try:
+                ct = p.create_time()
+                runtime_s = max(0.0, now - (ct if ct > self.boot_time else self.boot_time))
+            except Exception:
+                pass
+
+            processes.append(
+                ProcessInfo(
+                    pid=pid,
+                    name=name,
+                    cpu_percent=cpu_p,
+                    memory_percent=mem_p,
+                    status="RUNNING",
+                    threads=1,
+                    runtime_seconds=runtime_s,
+                )
+            )
+
+        # 7. App Footprint (Ztop Spectop running in background)
         app_cpu = 0.0
         app_mem = 0.0
         if self._self_proc:
             try:
                 app_mem = self._self_proc.memory_info().rss / (1024 * 1024)
                 raw_app_cpu = self._self_proc.cpu_percent(interval=None)
-                app_cpu = max(0.0, min(100.0, raw_app_cpu / cpu_count))
+                app_cpu = max(0.0, min(100.0, raw_app_cpu / self.cpu_count))
             except Exception:
                 pass
 
-        # Update timing reference
         self._last_time = now
 
         return SystemSnapshot(

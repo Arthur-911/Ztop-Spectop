@@ -1,4 +1,4 @@
-"""Visual styling, sparklines, and formatting utilities for NeonTop."""
+"""Visual styling, sparklines, and formatting utilities for Ztop Spectop."""
 
 from typing import List, Optional
 from src.themes import Theme, get_theme

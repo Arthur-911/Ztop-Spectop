@@ -1,4 +1,4 @@
-"""NeonTop - Modern Terminal & Web System Monitor
+"""Ztop Spectop - Modern Terminal & Web System Monitor
 
 Entry point for starting the terminal application, web dashboard, or exporting snapshots.
 """
@@ -17,7 +17,7 @@ if sys.platform == "win32":
 from rich.console import Console
 
 from src import __version__
-from src.app import NeonTopApp
+from src.app import ZtopSpectopApp
 from src.dashboard import build_dashboard
 from src.metrics import MetricsCollector
 from src.themes import THEME_ORDER, get_theme
@@ -25,7 +25,7 @@ from src.themes import THEME_ORDER, get_theme
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="NeonTop - Modern Themed Terminal & Web System Monitor",
+        description="Ztop Spectop - Modern Themed Terminal & Web System Monitor",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
@@ -95,7 +95,7 @@ def main():
         console.print(dashboard)
         sys.exit(0)
 
-    app = NeonTopApp(
+    app = ZtopSpectopApp(
         interval=args.interval,
         sort_by=args.sort,
         theme=args.theme,

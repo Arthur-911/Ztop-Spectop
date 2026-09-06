@@ -1,12 +1,12 @@
 # 🚀 Windows PC Performance Optimization & Tuning Guide
 
-This guide explains how to interpret the telemetry from **NeonTop** and which settings or adjustments you can make on your Windows computer to boost performance, lower latency, reduce RAM usage, and prevent CPU/disk bottlenecks.
+This guide explains how to interpret the telemetry from **Ztop Spectop** and which settings or adjustments you can make on your Windows computer to boost performance, lower latency, reduce RAM usage, and prevent CPU/disk bottlenecks.
 
 ---
 
-## 🧭 Quick Diagnostic Map (NeonTop ➔ System Fix)
+## 🧭 Quick Diagnostic Map (Ztop Spectop ➔ System Fix)
 
-| NeonTop Metric | Warning Sign | What It Means | Where to Adjust in Windows |
+| Ztop Spectop Metric | Warning Sign | What It Means | Where to Adjust in Windows |
 | :--- | :--- | :--- | :--- |
 | **RAM Usage** | > 80% with few apps open | Bloatware, startup programs, or memory leaks | `Task Manager` ➔ **Startup apps**, disable unused startup tasks |
 | **CPU Utilization** | High % while idle | Background telemetry, updates, or indexing | `Settings` ➔ **Privacy & security** ➔ Background apps & indexing |
@@ -67,7 +67,7 @@ This guide explains how to interpret the telemetry from **NeonTop** and which se
 ---
 
 ### 6. 🧠 Configure Virtual Memory (Paging File)
-*If NeonTop shows excessive swap usage or your system runs low on memory:*
+*If Ztop Spectop shows excessive swap usage or your system runs low on memory:*
 - **Shortcut:** Press `Win + R`, type `sysdm.cpl`, go to **Advanced** ➔ **Performance Settings** ➔ **Advanced** tab ➔ Under *Virtual memory*, click **Change...**.
 - Ensure the paging file is placed on your **fastest NVMe/SSD** (never on a mechanical HDD).
 - It is generally recommended to let Windows **Automatically manage paging file size for all drives**, unless you have limited disk space, in which case set a custom initial size (1.5x RAM) and maximum size (3x RAM).
@@ -75,12 +75,12 @@ This guide explains how to interpret the telemetry from **NeonTop** and which se
 ---
 
 ### 7. 🌡️ Hardware & Thermal Maintenance
-- **Laptop Airflow:** If NeonTop shows high CPU usage accompanied by thermal throttling (CPU frequency drops under load), ensure laptop vents are clean and elevated 1-2 cm off flat surfaces.
+- **Laptop Airflow:** If Ztop Spectop shows high CPU usage accompanied by thermal throttling (CPU frequency drops under load), ensure laptop vents are clean and elevated 1-2 cm off flat surfaces.
 - **XMP / DOCP in BIOS:** If you're on a desktop PC, enter BIOS and verify that **XMP** (Intel) or **DOCP / EXPO** (AMD) is enabled so your RAM runs at its advertised MHz speed rather than default JEDEC speeds (e.g. 2133 MHz).
 
 ---
 
-## 💡 Using NeonTop to Verify Your Improvements
+## 💡 Using Ztop Spectop to Verify Your Improvements
 1. **Before tweaking:** Run `python main.py` or `python main.py --web` and note your idle RAM %, CPU load %, and active background processes.
 2. **Apply optimizations:** Disable startup programs and reboot your machine.
 3. **After tweaking:** Run `python main.py` again. Press `s` to sort processes by RAM% or CPU% to verify that bloat processes are gone.

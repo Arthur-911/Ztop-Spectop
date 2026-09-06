@@ -1,4 +1,4 @@
-"""Theme definitions with distinct visual borders, backgrounds, and accents for NeonTop."""
+"""Theme definitions with distinct visual borders, backgrounds, and accents for Ztop Spectop."""
 
 from dataclasses import dataclass
 from typing import Dict, List

@@ -1,4 +1,4 @@
-# NeonTop
+# Ztop Spectop
 
 > A clean, minimalist terminal system monitor with custom background palettes, live sparklines, per-core telemetry, and real-time process monitoring.
 
@@ -16,7 +16,7 @@
 - 💾 **Memory & Storage**: Physical RAM, Swap/Pagefile usage, and multi-drive partition tracking (e.g. `C:/`).
 - 🌐 **Network & Disk I/O**: Real-time download/upload transfer rates, total throughput, and live disk read/write metrics.
 - ⚙️ **Process Explorer**: Clean, distraction-free active process list with individual process runtime tracking and one-key toggle to sort by **CPU%** or **RAM%**.
-- ⏱️ **Background Session & App Runtime**: Dedicated panel tracking how long NeonTop and other laptop background applications have been running, monitor memory/CPU footprint, and battery power status.
+- ⏱️ **Background Session & App Runtime**: Dedicated panel tracking how long Ztop Spectop and other laptop background applications have been running, monitor memory/CPU footprint, and battery power status.
 - 🔋 **Battery & Uptime**: Subtle battery indicator and system uptime counters.
 - ⌨️ **Interactive Controls**: Non-blocking keyboard hotkeys (`q` to quit, `s` to toggle sort, `t` to cycle themes, `space` to pause).
 - 📸 **Snapshot Mode**: Single-shot output mode (`--snapshot`) for fast terminal logs or CLI piping.
@@ -27,7 +27,7 @@
 
 ```text
 ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│  neontop ● · ArthursLaptop (Windows 10 AMD64) · up: 1d 0h 47m · bat: 100% · theme: Minimal Slate ·         │
+│  ztop spectop ● · ArthursLaptop (Windows 11 25H2 x64) · up: 1d 0h 47m · bat: 100% · theme: Minimal Slate ·  │
 └────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌─ cpu ───────────────────────────────────────────────┐┌─ memory & storage ──────────────────────────────────┐
 │ utilization:  14.6%  freq: 3.30 GHz  history:       ││ ram          ━━━━━━━───  74.4%      5.8 GB / 7.8 GB │
@@ -62,6 +62,9 @@ pip install -r requirements.txt
 ```
 
 ### 2. Launch
+
+#### One-Click Launch (Windows):
+Double-click **`run.bat`** (or **`ztop_spectop.bat`**).
 
 #### Terminal Monitor:
 ```bash
@@ -104,7 +107,7 @@ python main.py --web
 ```text
 usage: main.py [-h] [-i INTERVAL] [-s {cpu,ram}] [-t {slate,monochrome,nord,catppuccin,dracula}] [--snapshot] [-v]
 
-NeonTop - Modern Themed Terminal System Monitor
+Ztop Spectop - Modern Themed Terminal System Monitor
 
 options:
   -h, --help            Show this help message and exit
@@ -120,7 +123,7 @@ options:
 ## 📂 Project Structure
 
 ```text
-neontop/
+ztop_spectop/
 ├── src/
 │   ├── __init__.py      # Package metadata
 │   ├── app.py           # Interactive loop & non-blocking key event handler
@@ -129,6 +132,7 @@ neontop/
 │   ├── themes.py        # Dedicated background colors & minimalist palettes
 │   └── visualizer.py    # Sparkline curves, progress bars & formatters
 ├── main.py              # CLI argument parser & application entry point
+├── run.bat              # One-click Windows launcher (double-click to run)
 ├── requirements.txt     # Dependencies (psutil, rich)
 ├── LICENSE              # MIT License
 ├── OPTIMIZATION_TIPS.md # Windows performance & system tuning guide

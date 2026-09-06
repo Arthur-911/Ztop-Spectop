@@ -13,7 +13,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>NeonTop - Snowfield Monitor</title>
+  <title>Ztop Spectop - Snowfield Monitor</title>
   <style>
     /* Default Theme: Slate */
     :root, body[data-theme="slate"] {
@@ -363,7 +363,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <header class="glass-card">
       <div class="brand">
         <span class="status-dot"></span>
-        <span>neontop</span>
+        <span>ztop spectop</span>
         <span style="font-size: 0.75rem; color: var(--accent); background: rgba(56, 189, 248, 0.12); padding: 2px 8px; border-radius: 999px;">snowfield</span>
       </div>
       <div class="meta-info">
@@ -628,7 +628,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       return 'var(--high)';
     }
 
+    let isFetching = false;
     async function updateMetrics() {
+      if (isFetching) return;
+      isFetching = true;
       try {
         const res = await fetch(`/api/metrics?sort=${currentSort}`);
         const data = await res.json();
@@ -720,11 +723,16 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
       } catch (err) {
         console.error('Failed to update stats:', err);
+      } finally {
+        isFetching = false;
       }
     }
 
-    updateMetrics();
-    setInterval(updateMetrics, 1000);
+    async function pollLoop() {
+      await updateMetrics();
+      setTimeout(pollLoop, 1000);
+    }
+    pollLoop();
   </script>
 </body>
 </html>
@@ -740,7 +748,7 @@ def index():
 def api_metrics():
     from flask import request
     sort_by = request.args.get("sort", "cpu")
-    s = collector.collect(sort_by=sort_by, limit_processes=10)
+    s = collector.get_latest_snapshot(sort_by=sort_by, limit_processes=10)
 
     return jsonify({
         "cpu": {
@@ -836,10 +844,17 @@ def start_web_server(port: int = 5000, host: str = "127.0.0.1", theme: str = "sl
             continue
 
     url = f"http://{host}:{port}"
-    print(f"❄ Starting NeonTop Snowfield Web Dashboard at {url}")
+    print(f"❄ Starting Ztop Spectop Snowfield Web Dashboard at {url}")
     print(f"  Theme: {theme.upper()} | Press Ctrl+C in terminal to stop.")
+
+    # Start non-blocking background telemetry worker
+    collector.start_background(interval=1.0)
+
     try:
         webbrowser.open(url)
     except Exception:
         pass
-    app.run(host=host, port=port, debug=False)
+    try:
+        app.run(host=host, port=port, debug=False)
+    finally:
+        collector.stop_background()

@@ -28,7 +28,7 @@ def create_header(snapshot: SystemSnapshot, theme: Theme, pulse: bool = True) ->
         bat_str = f" · [{theme.text_muted}]bat:[/] [{theme.accent}]{snapshot.battery_percent:.0f}%[/]"
 
     header_text = Text.from_markup(
-        f" [bold {theme.text_main}]neontop[/bold {theme.text_main}] {pulse_dot} "
+        f" [bold {theme.text_main}]ztop spectop[/bold {theme.text_main}] {pulse_dot} "
         f"[{theme.text_muted}]·[/] [{theme.text_muted}]{snapshot.hostname}[/] "
         f"[{theme.text_muted}]({snapshot.os_name} {snapshot.architecture})[/] "
         f"· [{theme.text_muted}]up:[/] [{theme.text_main}]{format_uptime(snapshot.uptime_seconds)}[/]"

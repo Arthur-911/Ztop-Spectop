@@ -43,10 +43,10 @@ def parse_args():
     )
     parser.add_argument(
         "-t", "--theme",
-        type=str,
+        type=str.lower,
         choices=THEME_ORDER,
         default="slate",
-        help="Color theme palette for terminal (press 'T' inside app to cycle)",
+        help="Color theme palette (choices: slate, cyberpunk, matrix, nord, dracula, catppuccin, monochrome)",
     )
     parser.add_argument(
         "--web",
@@ -77,7 +77,7 @@ def main():
 
     if args.web:
         from src.web_server import start_web_server
-        start_web_server(port=args.port)
+        start_web_server(port=args.port, theme=args.theme)
         return
 
     selected_theme = get_theme(args.theme)

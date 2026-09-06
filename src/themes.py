@@ -1,4 +1,4 @@
-"""Theme definitions with dedicated background and foreground palettes for NeonTop."""
+"""Theme definitions with distinct visual borders, backgrounds, and accents for NeonTop."""
 
 from dataclasses import dataclass
 from typing import Dict, List
@@ -8,9 +8,9 @@ from typing import Dict, List
 class Theme:
     name: str
     display_name: str
-    bg: str           # Background color for root screen
-    panel_bg: str     # Card / panel background color
-    border: str       # Subtle card border
+    bg: str           # Screen background
+    panel_bg: str     # Card / panel background
+    border: str       # Distinct card border
     text_main: str    # Primary readable text
     text_muted: str   # Dim/subtle labels
     accent: str       # Primary key accent
@@ -43,76 +43,114 @@ THEMES: Dict[str, Theme] = {
         high="#f87171",        # Rose
         bar_track="#1a2230",
     ),
-    "monochrome": Theme(
-        name="monochrome",
-        display_name="Minimal Black",
-        bg="#000000",
-        panel_bg="#080808",
-        border="#222222",
-        text_main="#f5f5f5",
-        text_muted="#666666",
-        accent="#e5e5e5",
-        low="#cccccc",
-        med="#999999",
-        high="#ffffff",
-        bar_track="#1a1a1a",
+    "cyberpunk": Theme(
+        name="cyberpunk",
+        display_name="Cyberpunk Neon",
+        bg="#080410",
+        panel_bg="#100820",
+        border="#ff0055",      # Electric pink
+        text_main="#f8fafc",
+        text_muted="#9d4edd",
+        accent="#00f0ff",      # Electric cyan
+        low="#00ff9f",         # Neon green
+        med="#ffe600",         # Neon yellow
+        high="#ff0055",        # Hot pink
+        bar_track="#260f38",
+    ),
+    "matrix": Theme(
+        name="matrix",
+        display_name="Matrix Terminal",
+        bg="#000a02",
+        panel_bg="#021405",
+        border="#00cc44",      # Phosphor green
+        text_main="#e6ffe6",
+        text_muted="#227733",
+        accent="#00ff66",      # Bright green
+        low="#22cc44",
+        med="#88ff44",
+        high="#ff3333",
+        bar_track="#06260c",
     ),
     "nord": Theme(
         name="nord",
         display_name="Nord Arctic",
         bg="#1e222a",
         panel_bg="#242933",
-        border="#383f4f",
+        border="#88c0d0",      # Frost blue
         text_main="#eceff4",
         text_muted="#707c93",
         accent="#88c0d0",      # Frost cyan
         low="#a3be8c",         # Aurora green
         med="#ebcb8b",         # Aurora yellow
         high="#bf616a",        # Aurora red
-        bar_track="#2e3440",
-    ),
-    "catppuccin": Theme(
-        name="catppuccin",
-        display_name="Catppuccin Dark",
-        bg="#11111b",
-        panel_bg="#181825",
-        border="#313244",
-        text_main="#cdd6f4",
-        text_muted="#6c7086",
-        accent="#cba6f7",      # Mauve
-        low="#a6e3a1",         # Green
-        med="#fab387",         # Peach
-        high="#f38ba8",        # Red
-        bar_track="#242638",
+        bar_track="#3b4252",
     ),
     "dracula": Theme(
         name="dracula",
         display_name="Dracula Dark",
         bg="#191a21",
         panel_bg="#21222c",
-        border="#343746",
+        border="#bd93f9",      # Vampire purple
         text_main="#f8f8f2",
         text_muted="#6272a4",
-        accent="#bd93f9",      # Purple
-        low="#50fa7b",         # Green
+        accent="#ff79c6",      # Hot pink
+        low="#50fa7b",         # Neon green
         med="#ffb86c",         # Orange
         high="#ff5555",        # Red
-        bar_track="#2d303e",
+        bar_track="#343746",
+    ),
+    "catppuccin": Theme(
+        name="catppuccin",
+        display_name="Catppuccin Mocha",
+        bg="#11111b",
+        panel_bg="#181825",
+        border="#cba6f7",      # Mauve lavender
+        text_main="#cdd6f4",
+        text_muted="#6c7086",
+        accent="#89b4fa",      # Blue
+        low="#a6e3a1",         # Green
+        med="#fab387",         # Peach
+        high="#f38ba8",        # Red
+        bar_track="#313244",
+    ),
+    "monochrome": Theme(
+        name="monochrome",
+        display_name="Monochrome Minimal",
+        bg="#000000",
+        panel_bg="#0a0a0a",
+        border="#ffffff",      # High contrast white
+        text_main="#ffffff",
+        text_muted="#777777",
+        accent="#ffffff",
+        low="#cccccc",
+        med="#888888",
+        high="#ffffff",
+        bar_track="#222222",
     ),
 }
 
-THEME_ORDER: List[str] = ["slate", "monochrome", "nord", "catppuccin", "dracula"]
+THEME_ORDER: List[str] = [
+    "slate",
+    "cyberpunk",
+    "matrix",
+    "nord",
+    "dracula",
+    "catppuccin",
+    "monochrome",
+]
 
 
 def get_theme(name: str) -> Theme:
     """Retrieve theme by name, fallback to 'slate'."""
-    return THEMES.get(name.lower(), THEMES["slate"])
+    clean_name = str(name).strip().lower()
+    return THEMES.get(clean_name, THEMES["slate"])
 
 
 def next_theme(current_name: str) -> Theme:
     """Get the next theme in the cycle."""
+    clean_name = str(current_name).strip().lower()
     try:
-        idx = THEME_ORDER.index(current_name.lower())
+        idx = THEME_ORDER.index(clean_name)
         next_idx = (idx + 1) % len(THEME_ORDER)
     except ValueError:
         next_idx = 0

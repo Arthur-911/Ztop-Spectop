@@ -1,4 +1,4 @@
-"""Minimalist Web Dashboard with Snow Field Background & Particle Physics."""
+"""Minimalist Web Dashboard with Snow Field Background, Snow Particle Physics & Theme Switcher."""
 
 import os
 from flask import Flask, jsonify, render_template_string
@@ -6,6 +6,7 @@ from src.metrics import MetricsCollector
 
 collector = MetricsCollector()
 app = Flask(__name__)
+app.config["DEFAULT_THEME"] = "slate"
 
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
@@ -14,16 +15,89 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>NeonTop - Snowfield Monitor</title>
   <style>
-    :root {
-      --bg-dark: rgba(10, 14, 23, 0.72);
-      --card-bg: rgba(15, 23, 42, 0.65);
-      --card-border: rgba(255, 255, 255, 0.1);
+    /* Default Theme: Slate */
+    :root, body[data-theme="slate"] {
+      --bg-color: #0a0c10;
+      --card-bg: rgba(14, 19, 27, 0.72);
+      --card-border: rgba(56, 189, 248, 0.22);
       --text-main: #f8fafc;
       --text-muted: #94a3b8;
       --accent: #38bdf8;
       --low: #34d399;
       --med: #fbbf24;
       --high: #f87171;
+    }
+
+    body[data-theme="cyberpunk"] {
+      --bg-color: #080410;
+      --card-bg: rgba(16, 8, 32, 0.78);
+      --card-border: rgba(255, 0, 85, 0.45);
+      --text-main: #ffffff;
+      --text-muted: #c084fc;
+      --accent: #00f0ff;
+      --low: #00ff9f;
+      --med: #ffe600;
+      --high: #ff0055;
+    }
+
+    body[data-theme="matrix"] {
+      --bg-color: #000a02;
+      --card-bg: rgba(2, 20, 5, 0.82);
+      --card-border: rgba(0, 204, 68, 0.4);
+      --text-main: #e6ffe6;
+      --text-muted: #4ade80;
+      --accent: #00ff66;
+      --low: #22cc44;
+      --med: #88ff44;
+      --high: #ff3333;
+    }
+
+    body[data-theme="nord"] {
+      --bg-color: #1e222a;
+      --card-bg: rgba(36, 41, 51, 0.78);
+      --card-border: rgba(136, 192, 208, 0.35);
+      --text-main: #eceff4;
+      --text-muted: #88c0d0;
+      --accent: #88c0d0;
+      --low: #a3be8c;
+      --med: #ebcb8b;
+      --high: #bf616a;
+    }
+
+    body[data-theme="dracula"] {
+      --bg-color: #191a21;
+      --card-bg: rgba(33, 34, 44, 0.8);
+      --card-border: rgba(189, 147, 249, 0.4);
+      --text-main: #f8f8f2;
+      --text-muted: #bd93f9;
+      --accent: #ff79c6;
+      --low: #50fa7b;
+      --med: #ffb86c;
+      --high: #ff5555;
+    }
+
+    body[data-theme="catppuccin"] {
+      --bg-color: #11111b;
+      --card-bg: rgba(24, 24, 37, 0.8);
+      --card-border: rgba(203, 166, 247, 0.35);
+      --text-main: #cdd6f4;
+      --text-muted: #a6adc8;
+      --accent: #cba6f7;
+      --low: #a6e3a1;
+      --med: #fab387;
+      --high: #f38ba8;
+    }
+
+    body[data-theme="monochrome"] {
+      --bg-color: #000000;
+      --card-bg: rgba(10, 10, 10, 0.85);
+      --card-border: rgba(255, 255, 255, 0.35);
+      --text-main: #ffffff;
+      --text-muted: #a3a3a3;
+      --accent: #ffffff;
+      --low: #e5e5e5;
+      --med: #a3a3a3;
+      --high: #ffffff;
     }
 
     * {
@@ -34,12 +108,17 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     }
 
     body {
-      background: #0a0e17 url('/background.jpg') no-repeat center center fixed;
+      background-color: var(--bg-color);
+      background-image: url('/background.jpg');
+      background-repeat: no-repeat;
+      background-position: center center;
+      background-attachment: fixed;
       background-size: cover;
       color: var(--text-main);
       min-height: 100vh;
       overflow-x: hidden;
       position: relative;
+      transition: background-color 0.3s ease;
     }
 
     /* Ambient dark overlay for maximum readability */
@@ -82,11 +161,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       border-radius: 14px;
       padding: 18px 22px;
       box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
-      transition: border-color 0.2s ease, transform 0.2s ease;
+      transition: border-color 0.3s ease, background-color 0.3s ease;
     }
 
     .glass-card:hover {
-      border-color: rgba(255, 255, 255, 0.18);
+      border-color: rgba(255, 255, 255, 0.25);
     }
 
     /* Header */
@@ -125,9 +204,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     .meta-info {
       display: flex;
-      gap: 16px;
+      align-items: center;
+      gap: 14px;
       font-size: 0.85rem;
       color: var(--text-muted);
+      flex-wrap: wrap;
     }
 
     .meta-info span b {
@@ -258,21 +339,23 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     .btn-toggle {
       background: rgba(255, 255, 255, 0.08);
-      border: 1px solid rgba(255, 255, 255, 0.15);
+      border: 1px solid rgba(255, 255, 255, 0.18);
       color: var(--text-main);
-      padding: 4px 10px;
+      padding: 5px 12px;
       border-radius: 6px;
-      font-size: 0.75rem;
+      font-size: 0.78rem;
+      font-weight: 500;
       cursor: pointer;
-      transition: background 0.2s;
+      transition: background 0.2s, border-color 0.2s;
     }
 
     .btn-toggle:hover {
-      background: rgba(255, 255, 255, 0.16);
+      background: rgba(255, 255, 255, 0.18);
+      border-color: var(--accent);
     }
   </style>
 </head>
-<body>
+<body data-theme="slate">
   <div class="backdrop-overlay"></div>
   <canvas id="snow-canvas"></canvas>
 
@@ -288,6 +371,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <span>os: <b id="os">--</b></span>
         <span>uptime: <b id="uptime">--</b></span>
         <span id="battery-box" style="display:none;">battery: <b id="battery">--</b></span>
+        <button id="theme-btn" class="btn-toggle" onclick="cycleTheme()">🎨 Theme: Slate</button>
         <button id="snow-btn" class="btn-toggle" onclick="toggleSnow()">❄ Snow: On</button>
       </div>
     </header>
@@ -388,6 +472,31 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   </div>
 
   <script>
+    /* Theme Engine */
+    const THEMES = ["slate", "cyberpunk", "matrix", "nord", "dracula", "catppuccin", "monochrome"];
+    let currentThemeIndex = 0;
+
+    function setTheme(name) {
+      const idx = THEMES.indexOf(String(name).toLowerCase());
+      if (idx !== -1) currentThemeIndex = idx;
+      const themeName = THEMES[currentThemeIndex];
+      document.body.setAttribute('data-theme', themeName);
+      const btn = document.getElementById('theme-btn');
+      if (btn) {
+        btn.textContent = `🎨 Theme: ${themeName.charAt(0).toUpperCase() + themeName.slice(1)}`;
+      }
+    }
+
+    function cycleTheme() {
+      currentThemeIndex = (currentThemeIndex + 1) % THEMES.length;
+      setTheme(THEMES[currentThemeIndex]);
+    }
+
+    // Initialize theme from URL query or server default
+    const urlParams = new URLSearchParams(window.location.search);
+    const initialTheme = urlParams.get('theme') || "{{ default_theme }}";
+    setTheme(initialTheme);
+
     /* Snow Particle Physics Simulation */
     const canvas = document.getElementById('snow-canvas');
     const ctx = canvas.getContext('2d');
@@ -583,7 +692,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
 @app.route("/")
 def index():
-    return render_template_string(HTML_TEMPLATE)
+    default_theme = app.config.get("DEFAULT_THEME", "slate")
+    return render_template_string(HTML_TEMPLATE, default_theme=default_theme)
 
 
 @app.route("/api/metrics")
@@ -657,10 +767,12 @@ def serve_bg():
     return redirect("https://images.unsplash.com/photo-1517299321909-20b34934236a?auto=format&fit=crop&w=2160&q=85")
 
 
-def start_web_server(port: int = 5000, host: str = "127.0.0.1"):
+def start_web_server(port: int = 5000, host: str = "127.0.0.1", theme: str = "slate"):
     import logging
     import socket
     import webbrowser
+
+    app.config["DEFAULT_THEME"] = theme.lower()
 
     # Silence noisy HTTP access logs
     log = logging.getLogger("werkzeug")
@@ -678,7 +790,7 @@ def start_web_server(port: int = 5000, host: str = "127.0.0.1"):
 
     url = f"http://{host}:{port}"
     print(f"❄ Starting NeonTop Snowfield Web Dashboard at {url}")
-    print("  Press Ctrl+C to stop.")
+    print(f"  Theme: {theme.upper()} | Press Ctrl+C in terminal to stop.")
     try:
         webbrowser.open(url)
     except Exception:

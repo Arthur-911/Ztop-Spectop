@@ -450,6 +450,30 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         </div>
       </div>
 
+      <!-- App Background Session Card -->
+      <div class="glass-card">
+        <div class="card-title">
+          <span>App Background Session</span>
+          <span style="font-size: 0.72rem; color: var(--low); background: rgba(52, 211, 153, 0.12); padding: 2px 8px; border-radius: 999px; font-weight: 500;">Running</span>
+        </div>
+        <div class="big-stat">
+          <span id="app-session-time">0s</span>
+          <small>In Background</small>
+        </div>
+        <div class="stat-row">
+          <span class="label">Session Started</span>
+          <span class="val" id="app-session-start">--:--:--</span>
+        </div>
+        <div class="stat-row">
+          <span class="label">Monitor Footprint</span>
+          <span class="val" id="app-session-footprint">0.0% CPU · 0.0 MB</span>
+        </div>
+        <div class="stat-row">
+          <span class="label">Laptop Power State</span>
+          <span class="val" id="app-power-state">Plugged In</span>
+        </div>
+      </div>
+
       <!-- Process Monitor -->
       <div class="glass-card">
         <div class="card-title">
@@ -463,6 +487,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
               <th>Process Name</th>
               <th style="text-align: right;">CPU%</th>
               <th style="text-align: right;">RAM%</th>
+              <th style="text-align: right;">Time</th>
             </tr>
           </thead>
           <tbody id="proc-table"></tbody>
@@ -667,6 +692,20 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         document.getElementById('disk-read').textContent = formatSpeed(data.io.disk_read_speed);
         document.getElementById('disk-write').textContent = formatSpeed(data.io.disk_write_speed);
 
+        // App Background Session
+        if (data.app_session) {
+          document.getElementById('app-session-time').textContent = formatUptime(data.app_session.uptime_seconds);
+          const startDate = new Date(data.app_session.start_time * 1000);
+          document.getElementById('app-session-start').textContent = startDate.toLocaleTimeString();
+          document.getElementById('app-session-footprint').textContent = `${data.app_session.cpu_percent.toFixed(1)}% CPU · ${data.app_session.memory_mb.toFixed(1)} MB`;
+
+          let pState = data.system.battery.plugged ? "Plugged In (AC)" : "On Battery";
+          if (data.system.battery.has) {
+            pState += ` (${data.system.battery.percent.toFixed(0)}%)`;
+          }
+          document.getElementById('app-power-state').textContent = pState;
+        }
+
         // Processes
         const procTable = document.getElementById('proc-table');
         procTable.innerHTML = data.processes.slice(0, 8).map(p => `
@@ -675,6 +714,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             <td style="font-weight: 500;">${p.name.length > 20 ? p.name.substring(0, 20) + '…' : p.name}</td>
             <td style="color: ${getColor(p.cpu)}; text-align: right;">${p.cpu.toFixed(1)}%</td>
             <td style="color: ${getColor(p.mem)}; text-align: right;">${p.mem.toFixed(1)}%</td>
+            <td style="color: var(--text-muted); text-align: right;">${formatUptime(p.runtime || 0)}</td>
           </tr>
         `).join('');
 
@@ -740,9 +780,16 @@ def api_metrics():
                 "name": p.name,
                 "cpu": p.cpu_percent,
                 "mem": p.memory_percent,
+                "runtime": p.runtime_seconds,
             }
             for p in s.processes
         ],
+        "app_session": {
+            "uptime_seconds": s.app_uptime_seconds,
+            "start_time": s.app_start_time,
+            "cpu_percent": s.app_cpu_percent,
+            "memory_mb": s.app_memory_mb,
+        },
         "system": {
             "hostname": s.hostname,
             "os": s.os_name,

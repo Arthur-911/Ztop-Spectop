@@ -15,7 +15,8 @@
 - 🧠 **CPU Telemetry**: Overall CPU load, clock frequency, per-core utilization meters, and smooth historical trend sparklines (` ▂▃▄▅▆▇█`).
 - 💾 **Memory & Storage**: Physical RAM, Swap/Pagefile usage, and multi-drive partition tracking (e.g. `C:/`).
 - 🌐 **Network & Disk I/O**: Real-time download/upload transfer rates, total throughput, and live disk read/write metrics.
-- ⚙️ **Process Explorer**: Clean, distraction-free active process list with one-key toggle to sort by **CPU%** or **RAM%**.
+- ⚙️ **Process Explorer**: Clean, distraction-free active process list with individual process runtime tracking and one-key toggle to sort by **CPU%** or **RAM%**.
+- ⏱️ **Background Session & App Runtime**: Dedicated panel tracking how long NeonTop and other laptop background applications have been running, monitor memory/CPU footprint, and battery power status.
 - 🔋 **Battery & Uptime**: Subtle battery indicator and system uptime counters.
 - ⌨️ **Interactive Controls**: Non-blocking keyboard hotkeys (`q` to quit, `s` to toggle sort, `t` to cycle themes, `space` to pause).
 - 📸 **Snapshot Mode**: Single-shot output mode (`--snapshot`) for fast terminal logs or CLI piping.
@@ -130,6 +131,7 @@ neontop/
 ├── main.py              # CLI argument parser & application entry point
 ├── requirements.txt     # Dependencies (psutil, rich)
 ├── LICENSE              # MIT License
+├── OPTIMIZATION_TIPS.md # Windows performance & system tuning guide
 └── README.md            # Documentation
 ```
 

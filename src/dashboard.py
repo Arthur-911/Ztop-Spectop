@@ -182,6 +182,51 @@ def create_io_panel(snapshot: SystemSnapshot, theme: Theme) -> Panel:
     )
 
 
+def create_session_panel(snapshot: SystemSnapshot, theme: Theme) -> Panel:
+    """Render the dedicated App Background Session & Laptop Runtime panel."""
+    table = Table(box=SIMPLE, expand=True, show_header=False, padding=(0, 1))
+    table.add_column("Property", ratio=1)
+    table.add_column("Value", ratio=1)
+
+    app_time_str = format_uptime(snapshot.app_uptime_seconds)
+    start_time_str = datetime.datetime.fromtimestamp(snapshot.app_start_time).strftime("%H:%M:%S")
+
+    power_status = "Plugged In" if snapshot.battery_plugged else "On Battery"
+    if snapshot.has_battery:
+        power_str = f"{power_status} ({snapshot.battery_percent:.0f}%)"
+    else:
+        power_str = f"{power_status}"
+
+    footprint_str = f"{snapshot.app_cpu_percent:4.1f}% cpu · {snapshot.app_memory_mb:4.1f} MB"
+
+    table.add_row(
+        f"[{theme.text_main}]app background time[/{theme.text_main}]",
+        f"[bold {theme.accent}]{app_time_str}[/bold {theme.accent}]",
+    )
+    table.add_row(
+        f"[{theme.text_main}]session started[/{theme.text_main}]",
+        f"[{theme.text_muted}]{start_time_str}[/{theme.text_muted}]",
+    )
+    table.add_row(
+        f"[{theme.text_main}]app footprint[/{theme.text_main}]",
+        f"[{theme.low}]{footprint_str}[/{theme.low}]",
+    )
+    table.add_row(
+        f"[{theme.text_main}]laptop power state[/{theme.text_main}]",
+        f"[{theme.text_muted}]{power_str}[/{theme.text_muted}]",
+    )
+
+    return Panel(
+        table,
+        title=f"[{theme.text_muted}]app background session[/{theme.text_muted}]",
+        title_align="left",
+        box=ROUNDED,
+        border_style=theme.border,
+        style=f"{theme.text_main} on {theme.panel_bg}",
+        padding=(0, 1),
+    )
+
+
 def create_process_panel(snapshot: SystemSnapshot, theme: Theme, sort_by: str = "cpu") -> Panel:
     """Render the minimalist process monitor table."""
     table = Table(box=SIMPLE, expand=True, padding=(0, 1))
@@ -189,16 +234,19 @@ def create_process_panel(snapshot: SystemSnapshot, theme: Theme, sort_by: str = 
     table.add_column("process", justify="left", ratio=3, no_wrap=True)
     table.add_column("cpu%", justify="right", style=f"bold {theme.accent}" if sort_by == "cpu" else theme.text_main, width=7)
     table.add_column("mem%", justify="right", style=f"bold {theme.accent}" if sort_by == "ram" else theme.text_main, width=7)
+    table.add_column("time", justify="right", style=theme.text_muted, width=8)
 
     for proc in snapshot.processes:
         cpu_color = theme.get_color_for_percent(proc.cpu_percent)
         mem_color = theme.get_color_for_percent(proc.memory_percent)
+        time_str = format_uptime(proc.runtime_seconds)
 
         table.add_row(
             str(proc.pid),
             proc.name,
             f"[{cpu_color}]{proc.cpu_percent:5.1f}%[/{cpu_color}]",
             f"[{mem_color}]{proc.memory_percent:5.1f}%[/{mem_color}]",
+            f"[{theme.text_muted}]{time_str}[/{theme.text_muted}]",
         )
 
     return Panel(
@@ -255,7 +303,7 @@ def build_dashboard(
     layout["header"].update(create_header(snapshot, theme=theme, pulse=pulse))
     layout["footer"].update(create_footer(theme=theme, is_paused=is_paused, sort_by=sort_by))
 
-    # Split Main into two equal rows
+    # Split Main into two rows
     layout["main"].split_column(
         Layout(name="top_row", ratio=1),
         Layout(name="bottom_row", ratio=1),
@@ -267,10 +315,15 @@ def build_dashboard(
         Layout(create_memory_panel(snapshot, theme=theme), name="memory", ratio=1),
     )
 
-    # Bottom row: Network/IO & Processes
+    # Bottom row: Left column (Network/IO + App Session) & Right column (Processes)
     layout["bottom_row"].split_row(
-        Layout(create_io_panel(snapshot, theme=theme), name="io", ratio=1),
+        Layout(name="bottom_left", ratio=1),
         Layout(create_process_panel(snapshot, theme=theme, sort_by=sort_by), name="processes", ratio=1),
+    )
+
+    layout["bottom_left"].split_column(
+        Layout(create_io_panel(snapshot, theme=theme), name="io", ratio=1),
+        Layout(create_session_panel(snapshot, theme=theme), name="session", ratio=1),
     )
 
     return layout

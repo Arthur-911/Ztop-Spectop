@@ -28,6 +28,7 @@ class ProcessInfo:
     memory_percent: float
     status: str
     threads: int
+    runtime_seconds: float = 0.0
 
 
 @dataclass
@@ -69,6 +70,12 @@ class SystemSnapshot:
     architecture: str
     uptime_seconds: float
 
+    # App Session & Background Runtime
+    app_uptime_seconds: float
+    app_start_time: float
+    app_cpu_percent: float
+    app_memory_mb: float
+
     # Processes
     processes: List[ProcessInfo]
 
@@ -79,6 +86,12 @@ class MetricsCollector:
     def __init__(self, history_size: int = 40):
         self.history_size = history_size
         self.cpu_history: deque[float] = deque(maxlen=history_size)
+        self.app_start_time = time.time()
+        try:
+            self._self_proc = psutil.Process(os.getpid())
+            self._self_proc.cpu_percent(interval=None)
+        except Exception:
+            self._self_proc = None
         
         # System metadata
         try:
@@ -288,6 +301,14 @@ class MetricsCollector:
                     mem_p = proc.memory_percent() or 0.0
                     status = proc.status() or "?"
                     threads = proc.num_threads() or 1
+                    try:
+                        create_time = proc.create_time()
+                        if create_time <= self.boot_time:
+                            runtime_s = max(0.0, now - self.boot_time)
+                        else:
+                            runtime_s = max(0.0, now - create_time)
+                    except Exception:
+                        runtime_s = 0.0
 
                     processes.append(
                         ProcessInfo(
@@ -297,6 +318,7 @@ class MetricsCollector:
                             memory_percent=mem_p,
                             status=str(status).upper(),
                             threads=threads,
+                            runtime_seconds=runtime_s,
                         )
                     )
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
@@ -310,6 +332,17 @@ class MetricsCollector:
             processes.sort(key=lambda p: p.cpu_percent, reverse=True)
 
         processes = processes[:limit_processes]
+
+        # App footprint (NeonTop itself running in background)
+        app_cpu = 0.0
+        app_mem = 0.0
+        if self._self_proc:
+            try:
+                app_mem = self._self_proc.memory_info().rss / (1024 * 1024)
+                raw_app_cpu = self._self_proc.cpu_percent(interval=None)
+                app_cpu = max(0.0, min(100.0, raw_app_cpu / cpu_count))
+            except Exception:
+                pass
 
         # Update timing reference
         self._last_time = now
@@ -340,5 +373,9 @@ class MetricsCollector:
             os_name=self.os_name,
             architecture=self.architecture,
             uptime_seconds=max(0.0, now - self.boot_time),
+            app_uptime_seconds=max(0.0, now - self.app_start_time),
+            app_start_time=self.app_start_time,
+            app_cpu_percent=app_cpu,
+            app_memory_mb=app_mem,
             processes=processes,
         )

@@ -34,7 +34,12 @@ def make_sparkline(
     return f"[{theme.text_muted}]{padding}[/{theme.text_muted}]" + "".join(spark_parts)
 
 
-def make_bar(percent: float, theme: Optional[Theme] = None, width: int = 12) -> str:
+def make_bar(
+    percent: float,
+    theme: Optional[Theme] = None,
+    width: int = 10,
+    show_percent: bool = True,
+) -> str:
     """Generate a clean minimalist progress bar."""
     if theme is None:
         theme = get_theme("slate")
@@ -47,23 +52,25 @@ def make_bar(percent: float, theme: Optional[Theme] = None, width: int = 12) -> 
     bar_fill = f"[{color}]{'━' * filled_length}[/{color}]"
     bar_empty = f"[{theme.bar_track}]{'─' * empty_length}[/{theme.bar_track}]"
 
-    return f"{bar_fill}{bar_empty} [{color}]{percent:5.1f}%[/{color}]"
+    if show_percent:
+        return f"{bar_fill}{bar_empty} [{color}]{percent:4.1f}%[/{color}]"
+    return f"{bar_fill}{bar_empty}"
 
 
 def format_bytes(bytes_val: float) -> str:
     """Convert bytes into human readable format (B, KB, MB, GB, TB)."""
     if bytes_val <= 0:
-        return "  0.0 B"
+        return "0.0 B"
     for unit in ["B", "KB", "MB", "GB", "TB"]:
         if abs(bytes_val) < 1024.0:
-            return f"{bytes_val:5.1f} {unit}"
+            return f"{bytes_val:.1f} {unit}"
         bytes_val /= 1024.0
-    return f"{bytes_val:5.1f} PB"
+    return f"{bytes_val:.1f} PB"
 
 
 def format_speed(bytes_per_sec: float) -> str:
     """Convert bytes/sec into transfer speed string."""
-    return f"{format_bytes(bytes_per_sec).strip()}/s"
+    return f"{format_bytes(bytes_per_sec)}/s"
 
 
 def format_uptime(seconds: float) -> str:

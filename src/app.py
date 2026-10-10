@@ -33,13 +33,21 @@ def get_keypress() -> str | None:
                 return None
         return None
     else:
-        import select
-        dr, _, _ = select.select([sys.stdin], [], [], 0)
-        if dr:
-            try:
-                return sys.stdin.read(1).lower()
-            except Exception:
-                return None
+        try:
+            import select
+            import termios
+            import tty
+            dr, _, _ = select.select([sys.stdin], [], [], 0)
+            if dr:
+                fd = sys.stdin.fileno()
+                old_settings = termios.tcgetattr(fd)
+                try:
+                    tty.setcbreak(fd)
+                    return sys.stdin.read(1).lower()
+                finally:
+                    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        except Exception:
+            pass
         return None
 
 
@@ -75,6 +83,7 @@ class ZtopSpectopApp:
             auto_refresh=False,
         ) as live:
             last_pulse_time = time.time()
+            last_size = self.console.size
             needs_render = False
 
             try:
@@ -97,21 +106,28 @@ class ZtopSpectopApp:
                             needs_render = True
                         elif key == " ":
                             self.is_paused = not self.is_paused
+                            self.collector.set_paused(self.is_paused)
                             needs_render = True
 
-                    # 2. Check for new background metrics update
+                    # 2. Window resize detection
+                    current_size = self.console.size
+                    if current_size != last_size:
+                        last_size = current_size
+                        needs_render = True
+
+                    # 3. Check for new background metrics update
                     if not self.is_paused and self.collector._update_event.is_set():
                         self.collector._update_event.clear()
                         snapshot = self.collector.get_latest_snapshot(sort_by=self.sort_by)
                         needs_render = True
 
-                    # 3. Pulse indicator cycle
+                    # 4. Pulse indicator cycle
                     if not self.is_paused and (now - last_pulse_time >= self.interval):
                         self.pulse = not self.pulse
                         last_pulse_time = now
                         needs_render = True
 
-                    # 4. Render only when state or data changed
+                    # 5. Render only when state or data changed
                     if needs_render:
                         live.update(
                             build_dashboard(

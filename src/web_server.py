@@ -550,11 +550,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     let angle = 0;
     function renderSnow() {
-      if (!snowActive) {
-        ctx.clearRect(0, 0, width, height);
-        requestAnimationFrame(renderSnow);
-        return;
-      }
+      if (!snowActive) return;
 
       ctx.clearRect(0, 0, width, height);
       angle += 0.008;
@@ -585,6 +581,22 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       if (btn) {
         btn.textContent = snowActive ? '❄ Snow: On' : '❄ Snow: Off';
       }
+      if (snowActive) {
+        requestAnimationFrame(renderSnow);
+      } else {
+        ctx.clearRect(0, 0, width, height);
+      }
+    }
+
+    /* Security: HTML entity escaping to prevent XSS from process or disk names */
+    function escapeHtml(str) {
+      if (str == null) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
     }
 
     /* Live Metrics Polling */
@@ -679,7 +691,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         const disksContainer = document.getElementById('disks-container');
         disksContainer.innerHTML = data.disks.map(d => `
           <div class="stat-row">
-            <span class="label">Drive ${d.mount}</span>
+            <span class="label">Drive ${escapeHtml(d.mount)}</span>
             <span class="val">${formatBytes(d.used)} / ${formatBytes(d.total)}</span>
           </div>
           <div class="bar-container">
@@ -702,24 +714,29 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           document.getElementById('app-session-start').textContent = startDate.toLocaleTimeString();
           document.getElementById('app-session-footprint').textContent = `${data.app_session.cpu_percent.toFixed(1)}% CPU · ${data.app_session.memory_mb.toFixed(1)} MB`;
 
-          let pState = data.system.battery.plugged ? "Plugged In (AC)" : "On Battery";
+          let pState;
           if (data.system.battery.has) {
-            pState += ` (${data.system.battery.percent.toFixed(0)}%)`;
+            pState = (data.system.battery.plugged ? "Plugged In (AC)" : "On Battery") + ` (${data.system.battery.percent.toFixed(0)}%)`;
+          } else {
+            pState = "AC Power (Desktop)";
           }
           document.getElementById('app-power-state').textContent = pState;
         }
 
         // Processes
         const procTable = document.getElementById('proc-table');
-        procTable.innerHTML = data.processes.slice(0, 8).map(p => `
-          <tr>
-            <td style="color: var(--text-muted);">${p.pid}</td>
-            <td style="font-weight: 500;">${p.name.length > 20 ? p.name.substring(0, 20) + '…' : p.name}</td>
-            <td style="color: ${getColor(p.cpu)}; text-align: right;">${p.cpu.toFixed(1)}%</td>
-            <td style="color: ${getColor(p.mem)}; text-align: right;">${p.mem.toFixed(1)}%</td>
-            <td style="color: var(--text-muted); text-align: right;">${formatUptime(p.runtime || 0)}</td>
-          </tr>
-        `).join('');
+        procTable.innerHTML = data.processes.slice(0, 8).map(p => {
+          const cleanName = escapeHtml(p.name.length > 20 ? p.name.substring(0, 20) + '…' : p.name);
+          return `
+            <tr>
+              <td style="color: var(--text-muted);">${p.pid}</td>
+              <td style="font-weight: 500;">${cleanName}</td>
+              <td style="color: ${getColor(p.cpu)}; text-align: right;">${p.cpu.toFixed(1)}%</td>
+              <td style="color: ${getColor(p.mem)}; text-align: right;">${p.mem.toFixed(1)}%</td>
+              <td style="color: var(--text-muted); text-align: right;">${formatUptime(p.runtime || 0)}</td>
+            </tr>
+          `;
+        }).join('');
 
       } catch (err) {
         console.error('Failed to update stats:', err);
@@ -818,8 +835,19 @@ def serve_bg():
         if os.path.exists(name):
             from flask import send_file
             return send_file(os.path.abspath(name))
-    from flask import redirect
-    return redirect("https://images.unsplash.com/photo-1517299321909-20b34934236a?auto=format&fit=crop&w=2160&q=85")
+    from flask import Response
+    # High-performance self-contained dark SVG gradient backdrop (works 100% offline, 0ms network latency)
+    svg = '''<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+      <defs>
+        <radialGradient id="g" cx="50%" cy="30%" r="80%">
+          <stop offset="0%" stop-color="#141c2b" />
+          <stop offset="50%" stop-color="#0a0f18" />
+          <stop offset="100%" stop-color="#05070a" />
+        </radialGradient>
+      </defs>
+      <rect width="1920" height="1080" fill="url(#g)" />
+    </svg>'''
+    return Response(svg, mimetype="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
 
 
 def start_web_server(port: int = 5000, host: str = "127.0.0.1", theme: str = "slate"):
@@ -834,15 +862,21 @@ def start_web_server(port: int = 5000, host: str = "127.0.0.1", theme: str = "sl
     log.setLevel(logging.ERROR)
 
     # Check port availability and auto-increment if taken
+    chosen_port = None
     for p in range(port, port + 10):
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.bind((host, p))
-            port = p
+            chosen_port = p
             break
         except OSError:
             continue
 
+    if chosen_port is None:
+        print(f"[ERROR] Could not bind to any port in range {port}-{port+9} on {host}.")
+        return
+
+    port = chosen_port
     url = f"http://{host}:{port}"
     print(f"❄ Starting Ztop Spectop Snowfield Web Dashboard at {url}")
     print(f"  Theme: {theme.upper()} | Press Ctrl+C in terminal to stop.")

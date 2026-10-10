@@ -7,6 +7,8 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from rich.markup import escape
+
 from src.metrics import SystemSnapshot
 from src.themes import Theme, get_theme
 from src.visualizer import (
@@ -29,8 +31,8 @@ def create_header(snapshot: SystemSnapshot, theme: Theme, pulse: bool = True) ->
 
     header_text = Text.from_markup(
         f" [bold {theme.text_main}]ztop spectop[/bold {theme.text_main}] {pulse_dot} "
-        f"[{theme.text_muted}]·[/] [{theme.text_muted}]{snapshot.hostname}[/] "
-        f"[{theme.text_muted}]({snapshot.os_name} {snapshot.architecture})[/] "
+        f"[{theme.text_muted}]·[/] [{theme.text_muted}]{escape(snapshot.hostname)}[/] "
+        f"[{theme.text_muted}]({escape(snapshot.os_name)} {escape(snapshot.architecture)})[/] "
         f"· [{theme.text_muted}]up:[/] [{theme.text_main}]{format_uptime(snapshot.uptime_seconds)}[/]"
         f"{bat_str} "
         f"· [{theme.text_muted}]theme:[/] [{theme.accent}]{theme.display_name}[/] "
@@ -51,11 +53,11 @@ def create_cpu_panel(snapshot: SystemSnapshot, theme: Theme) -> Panel:
     freq_str = f"{snapshot.cpu_freq_current / 1000.0:.2f} GHz" if snapshot.cpu_freq_current > 0 else "N/A"
 
     content = []
-    sparkline = make_sparkline(snapshot.cpu_history, theme=theme, max_val=100.0, length=20)
+    sparkline = make_sparkline(snapshot.cpu_history, theme=theme, max_val=100.0, length=12)
     content.append(
-        f"[{theme.text_muted}]utilization:[/] [{color}]{snapshot.cpu_percent:5.1f}%[/{color}]  "
-        f"[{theme.text_muted}]freq:[/] [{theme.text_main}]{freq_str}[/]  "
-        f"[{theme.text_muted}]history:[/] {sparkline}\n"
+        f"[{theme.text_muted}]util:[/] [{color}]{snapshot.cpu_percent:4.1f}%[/{color}]  "
+        f"[{theme.text_muted}]clk:[/] [{theme.text_main}]{freq_str}[/]  "
+        f"[{theme.text_muted}]trend:[/] {sparkline}\n"
     )
 
     core_table = Table.grid(expand=True, padding=(0, 1))
@@ -71,9 +73,9 @@ def create_cpu_panel(snapshot: SystemSnapshot, theme: Theme) -> Panel:
         c1_idx = i
         c2_idx = i + half
 
-        c1_text = f"[{theme.text_muted}]c{c1_idx:02d}[/] {make_bar(cores[c1_idx], theme=theme, width=10)}"
+        c1_text = f"[{theme.text_muted}]c{c1_idx:02d}[/] {make_bar(cores[c1_idx], theme=theme, width=6)}"
         if c2_idx < num_cores:
-            c2_text = f"[{theme.text_muted}]c{c2_idx:02d}[/] {make_bar(cores[c2_idx], theme=theme, width=10)}"
+            c2_text = f"[{theme.text_muted}]c{c2_idx:02d}[/] {make_bar(cores[c2_idx], theme=theme, width=6)}"
         else:
             c2_text = ""
 
@@ -98,30 +100,48 @@ def create_cpu_panel(snapshot: SystemSnapshot, theme: Theme) -> Panel:
     )
 
 
+def _format_usage_pair(used: float, total: float) -> str:
+    """Format pair of byte quantities compactly (e.g. 5.6/7.8 GB or 247/476 GB)."""
+    try:
+        if total >= 10 * 1024**3:
+            u_gb = round(used / (1024**3))
+            t_gb = round(total / (1024**3))
+            return f"{u_gb}/{t_gb} GB"
+        u_str = format_bytes(used)
+        t_str = format_bytes(total)
+        u_val, u_unit = u_str.split()
+        t_val, t_unit = t_str.split()
+        if u_unit == t_unit:
+            return f"{u_val}/{t_val} {t_unit}"
+        return f"{u_str}/{t_str}"
+    except Exception:
+        return f"{format_bytes(used)}/{format_bytes(total)}"
+
+
 def create_memory_panel(snapshot: SystemSnapshot, theme: Theme) -> Panel:
     """Render the minimalist RAM and Storage panel."""
     table = Table.grid(expand=True, padding=(0, 1))
-    table.add_column("Label", justify="left", width=12)
-    table.add_column("Bar", ratio=1)
-    table.add_column("Details", justify="right", width=20)
+    table.add_column("Label", justify="left", width=8)
+    table.add_column("Bar", justify="center", width=7)
+    table.add_column("Details", justify="right", ratio=1)
 
     # Physical RAM
-    ram_bar = make_bar(snapshot.ram_percent, theme=theme, width=10)
-    ram_details = f"[{theme.text_muted}]{format_bytes(snapshot.ram_used).strip()} / {format_bytes(snapshot.ram_total).strip()}[/]"
+    ram_bar = make_bar(snapshot.ram_percent, theme=theme, width=6, show_percent=False)
+    ram_details = f"[{theme.text_muted}]{snapshot.ram_percent:.0f}% · {_format_usage_pair(snapshot.ram_used, snapshot.ram_total)}[/]"
     table.add_row(f"[{theme.text_main}]ram[/{theme.text_main}]", ram_bar, ram_details)
 
     # Swap
-    swap_bar = make_bar(snapshot.swap_percent, theme=theme, width=10)
-    swap_details = f"[{theme.text_muted}]{format_bytes(snapshot.swap_used).strip()} / {format_bytes(snapshot.swap_total).strip()}[/]"
+    swap_bar = make_bar(snapshot.swap_percent, theme=theme, width=6, show_percent=False)
+    swap_details = f"[{theme.text_muted}]{snapshot.swap_percent:.0f}% · {_format_usage_pair(snapshot.swap_used, snapshot.swap_total)}[/]"
     table.add_row(f"[{theme.text_main}]swap[/{theme.text_main}]", swap_bar, swap_details)
 
     table.add_row("", "", "")
 
     # Storage Partitions
     for disk in snapshot.disks:
-        disk_bar = make_bar(disk.percent, theme=theme, width=10)
-        disk_details = f"[{theme.text_muted}]{format_bytes(disk.used).strip()} / {format_bytes(disk.total).strip()}[/]"
-        clean_mount = disk.mountpoint.replace("\\", "/")
+        disk_bar = make_bar(disk.percent, theme=theme, width=6, show_percent=False)
+        disk_details = f"[{theme.text_muted}]{disk.percent:.0f}% · {_format_usage_pair(disk.used, disk.total)}[/]"
+        clean_mount = disk.mountpoint.replace("\\", "/").rstrip("/")
         mount_label = f"[{theme.accent}]disk {clean_mount}[/{theme.accent}]"
         table.add_row(mount_label, disk_bar, disk_details)
 
@@ -138,37 +158,28 @@ def create_memory_panel(snapshot: SystemSnapshot, theme: Theme) -> Panel:
 
 def create_io_panel(snapshot: SystemSnapshot, theme: Theme) -> Panel:
     """Render the minimalist Network and Disk I/O panel."""
-    table = Table(box=SIMPLE, expand=True, show_header=False, padding=(0, 1))
-    table.add_column("Label", ratio=1)
-    table.add_column("Speed", ratio=1)
-    table.add_column("Total", ratio=1)
+    table = Table.grid(expand=True, padding=(0, 1))
+    table.add_column("Label", justify="left", width=8)
+    table.add_column("Value", justify="right", ratio=1)
 
     dl_color = theme.accent if snapshot.net_download_speed > 0 else theme.text_muted
     ul_color = theme.low if snapshot.net_upload_speed > 0 else theme.text_muted
 
     table.add_row(
-        f"[{theme.text_main}]network download[/{theme.text_main}]",
-        f"[{dl_color}]↓ {format_speed(snapshot.net_download_speed)}[/{dl_color}]",
-        f"[{theme.text_muted}]tot: {format_bytes(snapshot.net_bytes_recv)}[/{theme.text_muted}]"
+        f"[{theme.text_main}]net down[/{theme.text_main}]",
+        f"[{dl_color}]↓ {format_speed(snapshot.net_download_speed)}[/{dl_color}] [{theme.text_muted}]({format_bytes(snapshot.net_bytes_recv)})[/]",
     )
     table.add_row(
-        f"[{theme.text_main}]network upload[/{theme.text_main}]",
-        f"[{ul_color}]↑ {format_speed(snapshot.net_upload_speed)}[/{ul_color}]",
-        f"[{theme.text_muted}]tot: {format_bytes(snapshot.net_bytes_sent)}[/{theme.text_muted}]"
+        f"[{theme.text_main}]net up[/{theme.text_main}]",
+        f"[{ul_color}]↑ {format_speed(snapshot.net_upload_speed)}[/{ul_color}] [{theme.text_muted}]({format_bytes(snapshot.net_bytes_sent)})[/]",
     )
 
     read_color = theme.accent if snapshot.disk_read_speed > 0 else theme.text_muted
     write_color = theme.low if snapshot.disk_write_speed > 0 else theme.text_muted
 
     table.add_row(
-        f"[{theme.text_main}]disk read[/{theme.text_main}]",
-        f"[{read_color}]r: {format_speed(snapshot.disk_read_speed)}[/{read_color}]",
-        ""
-    )
-    table.add_row(
-        f"[{theme.text_main}]disk write[/{theme.text_main}]",
-        f"[{write_color}]w: {format_speed(snapshot.disk_write_speed)}[/{write_color}]",
-        ""
+        f"[{theme.text_main}]disk r/w[/{theme.text_main}]",
+        f"[{read_color}]r:{format_speed(snapshot.disk_read_speed)}[/{read_color}] [{theme.text_muted}]·[/] [{write_color}]w:{format_speed(snapshot.disk_write_speed)}[/{write_color}]",
     )
 
     return Panel(
@@ -184,35 +195,31 @@ def create_io_panel(snapshot: SystemSnapshot, theme: Theme) -> Panel:
 
 def create_session_panel(snapshot: SystemSnapshot, theme: Theme) -> Panel:
     """Render the dedicated App Background Session & Laptop Runtime panel."""
-    table = Table(box=SIMPLE, expand=True, show_header=False, padding=(0, 1))
-    table.add_column("Property", ratio=1)
-    table.add_column("Value", ratio=1)
+    table = Table.grid(expand=True, padding=(0, 1))
+    table.add_column("Property", justify="left", width=9)
+    table.add_column("Value", justify="right", ratio=1)
 
     app_time_str = format_uptime(snapshot.app_uptime_seconds)
     start_time_str = datetime.datetime.fromtimestamp(snapshot.app_start_time).strftime("%H:%M:%S")
 
-    power_status = "Plugged In" if snapshot.battery_plugged else "On Battery"
     if snapshot.has_battery:
+        power_status = "Plugged In" if snapshot.battery_plugged else "On Battery"
         power_str = f"{power_status} ({snapshot.battery_percent:.0f}%)"
     else:
-        power_str = f"{power_status}"
+        power_str = "AC Power (Desktop)"
 
     footprint_str = f"{snapshot.app_cpu_percent:4.1f}% cpu · {snapshot.app_memory_mb:4.1f} MB"
 
     table.add_row(
-        f"[{theme.text_main}]app background time[/{theme.text_main}]",
-        f"[bold {theme.accent}]{app_time_str}[/bold {theme.accent}]",
+        f"[{theme.text_main}]uptime[/{theme.text_main}]",
+        f"[bold {theme.accent}]{app_time_str}[/bold {theme.accent}] [{theme.text_muted}](from {start_time_str})[/]",
     )
     table.add_row(
-        f"[{theme.text_main}]session started[/{theme.text_main}]",
-        f"[{theme.text_muted}]{start_time_str}[/{theme.text_muted}]",
-    )
-    table.add_row(
-        f"[{theme.text_main}]app footprint[/{theme.text_main}]",
+        f"[{theme.text_main}]footprint[/{theme.text_main}]",
         f"[{theme.low}]{footprint_str}[/{theme.low}]",
     )
     table.add_row(
-        f"[{theme.text_main}]laptop power state[/{theme.text_main}]",
+        f"[{theme.text_main}]power[/{theme.text_main}]",
         f"[{theme.text_muted}]{power_str}[/{theme.text_muted}]",
     )
 
@@ -229,23 +236,24 @@ def create_session_panel(snapshot: SystemSnapshot, theme: Theme) -> Panel:
 
 def create_process_panel(snapshot: SystemSnapshot, theme: Theme, sort_by: str = "cpu") -> Panel:
     """Render the minimalist process monitor table."""
-    table = Table(box=SIMPLE, expand=True, padding=(0, 1))
-    table.add_column("pid", justify="right", style=theme.text_muted, width=6)
-    table.add_column("process", justify="left", ratio=3, no_wrap=True)
-    table.add_column("cpu%", justify="right", style=f"bold {theme.accent}" if sort_by == "cpu" else theme.text_main, width=7)
-    table.add_column("mem%", justify="right", style=f"bold {theme.accent}" if sort_by == "ram" else theme.text_main, width=7)
-    table.add_column("time", justify="right", style=theme.text_muted, width=8)
+    table = Table(box=SIMPLE, expand=True, padding=(0, 0))
+    table.add_column("pid", justify="right", style=theme.text_muted, width=5)
+    table.add_column("process", justify="left", ratio=1, min_width=10, no_wrap=True)
+    table.add_column("cpu%", justify="right", style=f"bold {theme.accent}" if sort_by == "cpu" else theme.text_main, width=6)
+    table.add_column("mem%", justify="right", style=f"bold {theme.accent}" if sort_by == "ram" else theme.text_main, width=6)
+    table.add_column("time", justify="right", style=theme.text_muted, width=7)
 
     for proc in snapshot.processes:
         cpu_color = theme.get_color_for_percent(proc.cpu_percent)
         mem_color = theme.get_color_for_percent(proc.memory_percent)
         time_str = format_uptime(proc.runtime_seconds)
+        clean_name = escape(proc.name[:18])
 
         table.add_row(
             str(proc.pid),
-            proc.name,
-            f"[{cpu_color}]{proc.cpu_percent:5.1f}%[/{cpu_color}]",
-            f"[{mem_color}]{proc.memory_percent:5.1f}%[/{mem_color}]",
+            clean_name,
+            f"[{cpu_color}]{proc.cpu_percent:4.1f}%[/{cpu_color}]",
+            f"[{mem_color}]{proc.memory_percent:4.1f}%[/{mem_color}]",
             f"[{theme.text_muted}]{time_str}[/{theme.text_muted}]",
         )
 

@@ -169,12 +169,16 @@ class MetricsCollector:
         except Exception:
             self._last_disk_io = None
 
+        # Cached swap memory to avoid expensive Windows PDH kernel queries on every tick
+        self._cached_swap: Tuple[int, int, float] = (0, 0, 0.0)
+        self._last_swap_scan: float = 0.0
+
         # Cache disk partitions to avoid expensive WMI/kernel device scans every tick
         self._cached_partitions: List[str] = []
         self._last_partition_scan: float = 0.0
 
-        # Raw process snapshot cache for instantaneous sort switching
-        self._raw_procs: List[Tuple[int, str, float, float, psutil.Process]] = []
+        # Raw process snapshot cache for instantaneous sort switching (pid, name, cpu, mem, runtime)
+        self._raw_procs: List[Tuple[int, str, float, float, float]] = []
 
         # Threading & Background Worker
         self._lock = threading.RLock()
@@ -183,15 +187,24 @@ class MetricsCollector:
         self._latest_snapshot: Optional[SystemSnapshot] = None
         self._update_event = threading.Event()
         self._stop_event = threading.Event()
+        self._pause_event = threading.Event()
+        self._pause_event.set()
         self.interval = 1.0
 
         # Prime psutil counters
         try:
             psutil.cpu_percent(interval=None, percpu=True)
             psutil.cpu_percent(interval=None)
-            list(psutil.process_iter(attrs=['name', 'cpu_percent', 'memory_percent']))
+            list(psutil.process_iter(attrs=['name', 'cpu_percent', 'memory_percent', 'create_time']))
         except Exception:
             pass
+
+    def set_paused(self, paused: bool) -> None:
+        """Pause or resume the background telemetry collection worker."""
+        if paused:
+            self._pause_event.clear()
+        else:
+            self._pause_event.set()
 
     def start_background(self, interval: float = 1.0) -> None:
         """Start a background daemon thread that periodically collects snapshots."""
@@ -200,6 +213,7 @@ class MetricsCollector:
                 return
             self._bg_running = True
             self._stop_event.clear()
+            self._pause_event.set()
             self.interval = max(0.2, interval)
 
         # Initial collection outside lock
@@ -217,12 +231,26 @@ class MetricsCollector:
         """Stop the background collection thread."""
         with self._lock:
             self._bg_running = False
+        self._pause_event.set()
         self._stop_event.set()
         if self._bg_thread and self._bg_thread.is_alive():
             self._bg_thread.join(timeout=1.0)
 
     def _bg_worker(self) -> None:
+        # Prime thread-local CPU time baseline for this worker thread
+        try:
+            psutil.cpu_percent(interval=None)
+            psutil.cpu_percent(interval=None, percpu=True)
+        except Exception:
+            pass
+
         while self._bg_running:
+            # Idle gracefully if paused without burning CPU
+            if not self._pause_event.wait(timeout=0.2):
+                if self._stop_event.is_set():
+                    break
+                continue
+
             t0 = time.time()
             try:
                 snap = self.collect(sort_by="cpu")
@@ -249,34 +277,25 @@ class MetricsCollector:
         if not raw:
             return snap
 
-        # Fast in-memory process sorting and extraction
+        # Fast in-memory process sorting and extraction from cached precomputed tuples
         if sort_by.lower() in ("ram", "mem"):
             raw.sort(key=lambda x: x[3], reverse=True)
         else:
             raw.sort(key=lambda x: x[2], reverse=True)
 
         selected = raw[:limit_processes]
-        now = time.time()
-        procs: List[ProcessInfo] = []
-
-        for pid, name, cpu_p, mem_p, p in selected:
-            runtime_s = 0.0
-            try:
-                ct = p.create_time()
-                runtime_s = max(0.0, now - (ct if ct > self.boot_time else self.boot_time))
-            except Exception:
-                pass
-            procs.append(
-                ProcessInfo(
-                    pid=pid,
-                    name=name,
-                    cpu_percent=cpu_p,
-                    memory_percent=mem_p,
-                    status="RUNNING",
-                    threads=1,
-                    runtime_seconds=runtime_s,
-                )
+        procs: List[ProcessInfo] = [
+            ProcessInfo(
+                pid=pid,
+                name=name,
+                cpu_percent=cpu_p,
+                memory_percent=mem_p,
+                status="RUNNING",
+                threads=1,
+                runtime_seconds=runtime_s,
             )
+            for pid, name, cpu_p, mem_p, runtime_s in selected
+        ]
 
         return dataclasses.replace(snap, processes=procs)
 
@@ -304,7 +323,7 @@ class MetricsCollector:
         except Exception:
             cpu_freq_current = 0.0
 
-        # 2. Virtual & Swap Memory
+        # 2. Virtual & Swap Memory (Throttled swap query to avoid Windows PDH kernel lag)
         try:
             vmem = psutil.virtual_memory()
             ram_total = vmem.total
@@ -315,14 +334,15 @@ class MetricsCollector:
             ram_total = ram_used = ram_free = 0
             ram_percent = 0.0
 
-        try:
-            swap = psutil.swap_memory()
-            swap_total = swap.total
-            swap_used = swap.used
-            swap_percent = swap.percent
-        except Exception:
-            swap_total = swap_used = 0
-            swap_percent = 0.0
+        if (now - self._last_swap_scan > 5.0) or not self._last_swap_scan:
+            try:
+                sw = psutil.swap_memory()
+                self._cached_swap = (sw.total, sw.used, sw.percent)
+                self._last_swap_scan = now
+            except Exception:
+                self._cached_swap = (0, 0, 0.0)
+
+        swap_total, swap_used, swap_percent = self._cached_swap
 
         # 3. Disks & Disk I/O (Cached partitions to prevent drive-scanning lag)
         if not self._cached_partitions or (now - self._last_partition_scan > 60.0):
@@ -364,17 +384,18 @@ class MetricsCollector:
         except Exception:
             current_disk_io = None
 
-        if current_disk_io and self._last_disk_io:
-            read_bytes = max(0, current_disk_io.read_bytes - self._last_disk_io.read_bytes)
-            write_bytes = max(0, current_disk_io.write_bytes - self._last_disk_io.write_bytes)
-            disk_read_speed = max(0.0, read_bytes / dt)
-            disk_write_speed = max(0.0, write_bytes / dt)
-        else:
-            disk_read_speed = 0.0
-            disk_write_speed = 0.0
+        with self._lock:
+            if current_disk_io and self._last_disk_io:
+                read_bytes = max(0, current_disk_io.read_bytes - self._last_disk_io.read_bytes)
+                write_bytes = max(0, current_disk_io.write_bytes - self._last_disk_io.write_bytes)
+                disk_read_speed = max(0.0, read_bytes / dt)
+                disk_write_speed = max(0.0, write_bytes / dt)
+            else:
+                disk_read_speed = 0.0
+                disk_write_speed = 0.0
 
-        if current_disk_io:
-            self._last_disk_io = current_disk_io
+            if current_disk_io:
+                self._last_disk_io = current_disk_io
 
         # 4. Network Rates & Totals
         try:
@@ -382,33 +403,34 @@ class MetricsCollector:
         except Exception:
             current_net_io = None
 
-        if current_net_io and self._last_net_io:
-            recv_bytes = max(0, current_net_io.bytes_recv - self._last_net_io.bytes_recv)
-            sent_bytes = max(0, current_net_io.bytes_sent - self._last_net_io.bytes_sent)
-            net_download_speed = max(0.0, recv_bytes / dt)
-            net_upload_speed = max(0.0, sent_bytes / dt)
-        else:
-            net_download_speed = 0.0
-            net_upload_speed = 0.0
+        with self._lock:
+            if current_net_io and self._last_net_io:
+                recv_bytes = max(0, current_net_io.bytes_recv - self._last_net_io.bytes_recv)
+                sent_bytes = max(0, current_net_io.bytes_sent - self._last_net_io.bytes_sent)
+                net_download_speed = max(0.0, recv_bytes / dt)
+                net_upload_speed = max(0.0, sent_bytes / dt)
+            else:
+                net_download_speed = 0.0
+                net_upload_speed = 0.0
 
-        if current_net_io:
-            self._last_net_io = current_net_io
+            if current_net_io:
+                self._last_net_io = current_net_io
 
-        # 5. Battery Status
+        # 5. Battery Status (Desktop fallback: AC Power plugged in)
         try:
             battery = psutil.sensors_battery()
             has_battery = battery is not None
             battery_percent = battery.percent if battery else 0.0
-            battery_plugged = battery.power_plugged if battery else False
+            battery_plugged = battery.power_plugged if battery else True
         except Exception:
             has_battery = False
             battery_percent = 0.0
-            battery_plugged = False
+            battery_plugged = True
 
-        # 6. High-Performance Process Monitoring
-        raw_procs: List[Tuple[int, str, float, float, psutil.Process]] = []
+        # 6. Ultra-Fast Process Monitoring (Single-pass attribute querying)
+        raw_procs: List[Tuple[int, str, float, float, float]] = []
         try:
-            for p in psutil.process_iter(attrs=['name', 'cpu_percent', 'memory_percent']):
+            for p in psutil.process_iter(attrs=['name', 'cpu_percent', 'memory_percent', 'create_time']):
                 try:
                     info = p.info
                     name = info.get('name')
@@ -417,7 +439,9 @@ class MetricsCollector:
                     raw_cpu = info.get('cpu_percent') or 0.0
                     cpu_p = max(0.0, min(100.0, raw_cpu / self.cpu_count))
                     mem_p = info.get('memory_percent') or 0.0
-                    raw_procs.append((p.pid, name, cpu_p, mem_p, p))
+                    ct = info.get('create_time') or 0.0
+                    runtime_s = max(0.0, now - (ct if ct > self.boot_time else self.boot_time))
+                    raw_procs.append((p.pid, name, cpu_p, mem_p, runtime_s))
                 except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                     continue
                 except Exception:
@@ -435,27 +459,18 @@ class MetricsCollector:
             raw_procs.sort(key=lambda x: x[2], reverse=True)
 
         selected = raw_procs[:limit_processes]
-        processes: List[ProcessInfo] = []
-
-        for pid, name, cpu_p, mem_p, p in selected:
-            runtime_s = 0.0
-            try:
-                ct = p.create_time()
-                runtime_s = max(0.0, now - (ct if ct > self.boot_time else self.boot_time))
-            except Exception:
-                pass
-
-            processes.append(
-                ProcessInfo(
-                    pid=pid,
-                    name=name,
-                    cpu_percent=cpu_p,
-                    memory_percent=mem_p,
-                    status="RUNNING",
-                    threads=1,
-                    runtime_seconds=runtime_s,
-                )
+        processes: List[ProcessInfo] = [
+            ProcessInfo(
+                pid=pid,
+                name=name,
+                cpu_percent=cpu_p,
+                memory_percent=mem_p,
+                status="RUNNING",
+                threads=1,
+                runtime_seconds=runtime_s,
             )
+            for pid, name, cpu_p, mem_p, runtime_s in selected
+        ]
 
         # 7. App Footprint (Ztop Spectop running in background)
         app_cpu = 0.0
@@ -468,7 +483,8 @@ class MetricsCollector:
             except Exception:
                 pass
 
-        self._last_time = now
+        with self._lock:
+            self._last_time = now
 
         return SystemSnapshot(
             cpu_percent=cpu_overall,
